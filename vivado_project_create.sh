@@ -55,14 +55,21 @@ else
     i=1
     while [ $i -le $# ]; do
         case ${!i} in
+            # Parse Directory
             "-d" | "--dir")
                 i=$((i+1))
                 dir=${!i};;
+            
+            # Parse project name
             "-n" | "--name")
                 i=$((i+1))
-                proj_name=${!i};;      
+                proj_name=${!i};;
+
+            # Parse Document creation flag      
             "--docs")
                 do_docs="true";;
+
+            # Parse remove exising folder flag
             "--rm")
                 remove="true";;
         esac
@@ -109,7 +116,7 @@ if [ -d "${dir}${proj_name}" ]; then
 fi
 
 # Create the parent directory with the child directories underneth it.
-mkdir -p "${dir}${proj_name}"/"firmware"/{"BD","HDL","Constraints"} "${dir}${proj_name}"/"scripts"
+mkdir -p "${dir}${proj_name}"/"firmware"/{"BD","HDL","Constraints","IP"} "${dir}${proj_name}"/"scripts"
 
 # Check if the documents child directory needs to be created
 if [ "$do_docs" ]; then

@@ -90,44 +90,118 @@ COL_RESET='\[\e[0m\]'
 COL_YELLOW='\[\e[38;5;229m\]'
 COL_CYAN='\[\e[96m\]'
 COL_RED='\[\e[91m\]'
+COL_GREEN='\[\e[92m\]'
 
-# 4) Fast, NUL‑free counts; prints either:
-#       " +<staged> ~<untracked> -<modified> [ ! ]"
-#    or an empty string when clean.
-git_counts_clean() {
+# 4) Build a posh-git-like status string:
+#    [branch S +A ~B -C !D | +E ~F -G !H W]
+#    - S: upstream relation (e.g. ≡, ↑2, ↓1, 2↕3)
+#    - Left counts: index (staged)
+#    - Right counts: worktree (unstaged/untracked)
+#    - W: overall state (! for unstaged/untracked, ~ for staged-only, empty when clean)
+git_posh_status() {
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
 
-  local staged=0 modified=0 untracked=0 line x y
+  local head='' branch='' state='' working=''
+  local ahead=0 behind=0 has_upstream=0
+  local i_add=0 i_mod=0 i_del=0 i_conf=0
+  local w_add=0 w_mod=0 w_del=0 w_conf=0
+  local line tag xy x y status body
+
   while IFS= read -r line; do
     [ -z "$line" ] && continue
-    x="${line:0:1}"
-    y="${line:1:1}"
-    if [ "$x$y" = "??" ]; then
-      untracked=$((untracked+1))
-      continue
-    fi
-    case "$x" in A|M|R|C|D) staged=$((staged+1));; esac
-    case "$y" in M|D)       modified=$((modified+1));; esac
-  done < <(git status --porcelain=1 2>/dev/null)
+    case "$line" in
+      '# branch.head '*)
+        head="${line#\# branch.head }"
+        ;;
+      '# branch.upstream '*)
+        has_upstream=1
+        ;;
+      '# branch.ab '*)
+        ahead="${line#\# branch.ab +}"
+        ahead="${ahead%% *}"
+        behind="${line##* -}"
+        ;;
+      '? '*)
+        w_add=$((w_add + 1))
+        ;;
+      '! '*)
+        ;;
+      'u '*)
+        i_conf=$((i_conf + 1))
+        w_conf=$((w_conf + 1))
+        ;;
+      '1 '*|'2 '*)
+        tag="${line%% *}"
+        body="${line#${tag} }"
+        xy="${body%% *}"
+        x="${xy:0:1}"
+        y="${xy:1:1}"
 
-  # Show nothing if totally clean
-  if [ "$staged" -eq 0 ] && [ "$modified" -eq 0 ] && [ "$untracked" -eq 0 ]; then
-    printf ''
+        case "$x" in
+          A) i_add=$((i_add + 1)) ;;
+          D) i_del=$((i_del + 1)) ;;
+          U) i_conf=$((i_conf + 1)) ;;
+          .) ;;
+          *) i_mod=$((i_mod + 1)) ;;
+        esac
+
+        case "$y" in
+          A) w_add=$((w_add + 1)) ;;
+          D) w_del=$((w_del + 1)) ;;
+          U) w_conf=$((w_conf + 1)) ;;
+          .) ;;
+          *) w_mod=$((w_mod + 1)) ;;
+        esac
+        ;;
+    esac
+  done < <(git status --porcelain=2 --branch --untracked-files=normal 2>/dev/null)
+
+  if [ "$head" = "(detached)" ] || [ -z "$head" ]; then
+    branch=$(git rev-parse --short HEAD 2>/dev/null)
   else
-    # Mark dirty if *any* count is non-zero (staged OR modified OR untracked)
-    printf ' +%d ~%d -%d !' "$staged" "$untracked" "$modified"
+    branch="$head"
   fi
+
+  if [ "$has_upstream" -eq 1 ]; then
+    if [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ]; then
+      state="${ahead}↕${behind}"
+    elif [ "$ahead" -gt 0 ]; then
+      state="↑${ahead}"
+    elif [ "$behind" -gt 0 ]; then
+      state="↓${behind}"
+    else
+      state='≡'
+    fi
+  fi
+
+  if [ "$w_add" -gt 0 ] || [ "$w_mod" -gt 0 ] || [ "$w_del" -gt 0 ] || [ "$w_conf" -gt 0 ]; then
+    working=' !'
+  elif [ "$i_add" -gt 0 ] || [ "$i_mod" -gt 0 ] || [ "$i_del" -gt 0 ] || [ "$i_conf" -gt 0 ]; then
+    working=' ~'
+  fi
+
+  # Keep clean repos minimal: show branch name and upstream relation if present.
+  if [ "$i_add" -eq 0 ] && [ "$i_mod" -eq 0 ] && [ "$i_del" -eq 0 ] && [ "$i_conf" -eq 0 ] && \
+     [ "$w_add" -eq 0 ] && [ "$w_mod" -eq 0 ] && [ "$w_del" -eq 0 ] && [ "$w_conf" -eq 0 ]; then
+    status="${COL_YELLOW}[${COL_CYAN}${branch}"
+    [ -n "$state" ] && status+=" ${COL_CYAN}${state}"
+    status+="${COL_YELLOW}]"
+    printf '%s' "$status"
+    return 0
+  fi
+
+  status="${COL_YELLOW}[${COL_CYAN}${branch}"
+  [ -n "$state" ] && status+=" ${COL_CYAN}${state}"
+  status+=" ${COL_GREEN}+${i_add} ~${i_mod} -${i_del} !${i_conf}"
+  status+=" ${COL_YELLOW}|${COL_RED} +${w_add} ~${w_mod} -${w_del} !${w_conf}${working}"
+  status+="${COL_YELLOW}]"
+  printf '%s' "$status"
 }
 
 # Print a colored git segment only when inside a git repo (no empty brackets)
 git_prompt_segment() {
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
-  local branch counts seg
-  branch=$(__git_ps1 "%s")
-  counts=$(git_counts_clean)
-  [ -z "$branch" ] && [ -z "$counts" ] && return 0
-  seg="${COL_YELLOW}[${COL_CYAN}${branch}${COL_RED}${counts}${COL_YELLOW}]"
-  printf '%s' "$seg"
+  git_posh_status
 }
 
 
@@ -141,9 +215,9 @@ if [ "$color_prompt" = yes ]; then
     local gitseg
     gitseg=$(git_prompt_segment)
     if [ -n "$gitseg" ]; then
-      PS1="${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\] ${gitseg}${COL_RESET} \$ "
+      PS1="${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\] ${gitseg}${COL_RESET}\$ "
     else
-      PS1="${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]${COL_RESET} \$ "
+      PS1="${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]${COL_RESET}\$ "
     fi
   }
   PROMPT_COMMAND=set_bash_prompt
@@ -206,16 +280,6 @@ if ! shopt -oq posix; then
   fi
 fi
 
-# Xilinx Vivado
-if [ -f /tools/Xilinx/Vivado/2024.1/settings64.sh ]; then
-    source /tools/Xilinx/Vivado/2024.1/settings64.sh
-fi
-
-# Xilinx Vitis
-if [ -f /tools/Xilinx/Vitis/2024.1/settings64.sh ]; then
-    source /tools/Xilinx/Vitis/2024.1/settings64.sh
-fi
-
 # Start ssh-agent if not already running
 if ! pgrep -u "$USER" ssh-agent > /dev/null; then
     eval "$(ssh-agent -s)"
@@ -224,3 +288,5 @@ fi
 # Point SSH_AUTH_SOCK to the agent
 export SSH_AUTH_SOCK=$(ls /tmp/ssh-*/agent.* 2>/dev/null | head -n 1)
 
+export PATH="/home/scott.mckenzie/.local/bin:$PATH"
+#export SSH_AUTH_SOCK="$XDG_RUNTIME_DIR/ssh-agent.socket"

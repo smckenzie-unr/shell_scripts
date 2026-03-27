@@ -56,18 +56,6 @@ if [ -n "$force_color_prompt" ]; then
     fi
 fi
 
-#parse_git_branch() {
-#    git branch 2> /dev/null | sed -e '/^[^*]/d' -e 's/* \(.*\)/ (\1)/'
-#}
-
-
-# if [ "$color_prompt" = yes ]; then
-#     PS1='${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\[\033[01;36m\]$(parse_git_branch)\[\033[00m\]\$ '
-# else
-#     PS1='${debian_chroot:+($debian_chroot)}\u@\h:\w\$ '
-# fi
-
-
 ##### ─────────────────────────────────────────────
 #####  Posh‑git style Bash prompt (branch‑only when clean)
 ##### ─────────────────────────────────────────────
@@ -192,9 +180,19 @@ git_posh_status() {
 
   status="${COL_YELLOW}[${COL_CYAN}${branch}"
   [ -n "$state" ] && status+=" ${COL_CYAN}${state}"
-  status+=" ${COL_GREEN}+${i_add} ~${i_mod} -${i_del} !${i_conf}"
-  status+=" ${COL_YELLOW}|${COL_RED} +${w_add} ~${w_mod} -${w_del} !${w_conf}${working}"
-  status+="${COL_YELLOW}]"
+
+  if [ "$i_add" -gt 0 ] || [ "$i_mod" -gt 0 ] || [ "$i_del" -gt 0 ] || [ "$i_conf" -gt 0 ]; then
+    status+=" ${COL_GREEN}+${i_add} ~${i_mod} -${i_del} !${i_conf}"
+  fi
+
+  if [ "$w_add" -gt 0 ] || [ "$w_mod" -gt 0 ] || [ "$w_del" -gt 0 ] || [ "$w_conf" -gt 0 ]; then
+    if [ "$i_add" -gt 0 ] || [ "$i_mod" -gt 0 ] || [ "$i_del" -gt 0 ] || [ "$i_conf" -gt 0 ]; then
+      status+=" ${COL_YELLOW}|"
+    fi
+    status+=" ${COL_RED}+${w_add} ~${w_mod} -${w_del} !${w_conf}"
+  fi
+
+  status+="${working}${COL_YELLOW}]"
   printf '%s' "$status"
 }
 
@@ -278,6 +276,16 @@ if ! shopt -oq posix; then
   elif [ -f /etc/bash_completion ]; then
     . /etc/bash_completion
   fi
+fi
+
+# Xilinx Vivado
+if [ -f /tools/Xilinx/Vivado/2022.1/settings64.sh ]; then
+    source /tools/Xilinx/Vivado/2022.1/settings64.sh
+fi
+
+# Xilinx Vitis
+if [ -f /tools/Xilinx/Vitis/2022.1/settings64.sh ]; then
+    source /tools/Xilinx/Vitis/2022.1/settings64.sh
 fi
 
 # Start ssh-agent if not already running
